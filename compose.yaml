@@ -1,0 +1,92 @@
+name: billing
+
+x-app: &app
+  image: billing-app:local
+  build: .
+  init: true
+
+x-database-url: &database-url postgresql+asyncpg://billing:local-db-password@postgres/billing
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: billing
+      POSTGRES_USER: billing
+      POSTGRES_PASSWORD: local-db-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4.2-alpine
+    hostname: billing-rabbitmq
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./rabbitmq/billing.conf:/etc/rabbitmq/conf.d/30-billing.conf:ro
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/billing-definitions.json:ro
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, check_port_connectivity]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    <<: *app
+    command: [alembic, upgrade, head]
+    environment:
+      BILLING_DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: [uvicorn, --factory, billing.api:create_app, --host, 0.0.0.0, --port, '8000']
+    environment:
+      BILLING_API_KEY: '${BILLING_API_KEY:-}'
+      BILLING_DATABASE_URL: *database-url
+    ports:
+      - '127.0.0.1:${BILLING_HTTP_PORT:-8000}:8000'
+    healthcheck:
+      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1', 8000), 1).close()"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  consumer:
+    <<: *app
+    command: [python, -m, billing.worker]
+    environment:
+      BILLING_DATABASE_URL: *database-url
+      BILLING_RABBITMQ_URL: amqp://billing:local-broker-password@rabbitmq:5672/
+      BILLING_WEBHOOK_PRIVATE_HOSTS: '${BILLING_WEBHOOK_PRIVATE_HOSTS:-[]}'
+      BILLING_WEBHOOK_TIMEOUT: '${BILLING_WEBHOOK_TIMEOUT:-5}'
+      BILLING_RETRY_BASE_SECONDS: '${BILLING_RETRY_BASE_SECONDS:-1}'
+      BILLING_OUTBOX_POLL_SECONDS: '${BILLING_OUTBOX_POLL_SECONDS:-0.25}'
+    restart: unless-stopped
+    stop_grace_period: 45s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+
+  webhook-demo:
+    <<: *app
+    profiles: [demo]
+    command: [python, /demo/webhook_receiver.py]
+    volumes:
+      - ./examples/webhook_receiver.py:/demo/webhook_receiver.py:ro
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

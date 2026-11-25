@@ -1,0 +1,24 @@
+{
+  "vhosts": [{"name": "/"}],
+  "users": [
+    {
+      "name": "billing",
+      "password_hash": "w4an2Q/i/JXFMvNdFGlN6/IM8zpWKHiliOfOYCNN7ianroME",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "permissions": [
+    {"user": "billing", "vhost": "/", "configure": ".*", "write": ".*", "read": ".*"}
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "billing-worker-delivery-limit",
+      "pattern": "^payments[.]new$",
+      "apply-to": "quorum_queues",
+      "definition": {"delivery-limit": 2},
+      "priority": 0
+    }
+  ]
+}
