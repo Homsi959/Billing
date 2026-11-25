@@ -28,6 +28,7 @@ dev = [
 
 [tool.poe.tasks]
 check = "bash scripts/check.sh"
+demo = "bash scripts/demo.sh"
 lint = "ruff check ."
 
 [tool.pytest.ini_options]
